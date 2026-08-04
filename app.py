@@ -1,22 +1,8 @@
-import psycopg2
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for
 from datetime import datetime
+import lakebase
 
 app = Flask(__name__)
-
-# Lakebase connection parameters (tested and working)
-DB_CONFIG = {
-    'host': 'ep-divine-forest-d82jgu9t.database.us-east-2.cloud.databricks.com',
-    'database': 'databricks_postgres',
-    'user': 'student',
-    'password': 'npg_qWNBumC13JhY',
-    'port': 5432,
-    'sslmode': 'require'
-}
-
-def get_db_connection():
-    """Create a new database connection."""
-    return psycopg2.connect(**DB_CONFIG)
 
 @app.route('/healthz')
 def healthz():
@@ -27,17 +13,11 @@ def healthz():
 def home():
     """Home page - list all tickets."""
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
+        tickets = lakebase.run_query("""
             SELECT id, title, status, priority, created_at 
             FROM tickets 
             ORDER BY created_at DESC
         """)
-        tickets = cur.fetchall()
-        cur.close()
-        conn.close()
-        
         return render_template_string(HOME_TEMPLATE, tickets=tickets)
     except Exception as e:
         return f"<h1>Error loading tickets</h1><p>{str(e)}</p>", 500
@@ -46,31 +26,23 @@ def home():
 def view_ticket(ticket_id):
     """View a single ticket with all messages."""
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        # Get ticket details
-        cur.execute("""
+        tickets = lakebase.run_query("""
             SELECT id, title, description, status, priority, created_at 
             FROM tickets 
             WHERE id = %s
         """, (ticket_id,))
-        ticket = cur.fetchone()
         
-        if not ticket:
+        if not tickets:
             return "<h1>Ticket not found</h1>", 404
         
-        # Get messages
-        cur.execute("""
+        ticket = tickets[0]
+        
+        messages = lakebase.run_query("""
             SELECT message, created_at 
             FROM ticket_messages 
             WHERE ticket_id = %s 
             ORDER BY created_at ASC
         """, (ticket_id,))
-        messages = cur.fetchall()
-        
-        cur.close()
-        conn.close()
         
         return render_template_string(TICKET_DETAIL_TEMPLATE, ticket=ticket, messages=messages)
     except Exception as e:
@@ -85,17 +57,15 @@ def new_ticket():
             description = request.form.get('description')
             priority = request.form.get('priority', 'medium')
             
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO tickets (title, description, status, priority) 
-                VALUES (%s, %s, 'open', %s) 
-                RETURNING id
-            """, (title, description, priority))
-            ticket_id = cur.fetchone()[0]
-            conn.commit()
-            cur.close()
-            conn.close()
+            with lakebase.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO tickets (title, description, status, priority) 
+                        VALUES (%s, %s, 'open', %s) 
+                        RETURNING id
+                    """, (title, description, priority))
+                    ticket_id = cur.fetchone()['id']
+                    conn.commit()
             
             return redirect(url_for('view_ticket', ticket_id=ticket_id))
         except Exception as e:
@@ -108,16 +78,10 @@ def add_message(ticket_id):
     """Add a message to a ticket."""
     try:
         message = request.form.get('message')
-        
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
+        lakebase.run_write("""
             INSERT INTO ticket_messages (ticket_id, message) 
             VALUES (%s, %s)
         """, (ticket_id, message))
-        conn.commit()
-        cur.close()
-        conn.close()
         
         return redirect(url_for('view_ticket', ticket_id=ticket_id))
     except Exception as e:
@@ -128,24 +92,18 @@ def update_status(ticket_id):
     """Update ticket status."""
     try:
         status = request.form.get('status')
-        
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
+        lakebase.run_write("""
             UPDATE tickets 
             SET status = %s 
             WHERE id = %s
         """, (status, ticket_id))
-        conn.commit()
-        cur.close()
-        conn.close()
         
         return redirect(url_for('view_ticket', ticket_id=ticket_id))
     except Exception as e:
         return f"<h1>Error updating status</h1><p>{str(e)}</p>", 500
 
 # HTML Templates
-HOME_TEMPLATE = '''
+HOME_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -181,24 +139,24 @@ HOME_TEMPLATE = '''
         <tbody>
             {% for ticket in tickets %}
             <tr>
-                <td>{{ ticket[0] }}</td>
-                <td><a href="/ticket/{{ ticket[0] }}">{{ ticket[1] }}</a></td>
-                <td class="status-{{ ticket[2] }}">{{ ticket[2] }}</td>
-                <td>{{ ticket[3] }}</td>
-                <td>{{ ticket[4].strftime('%Y-%m-%d %H:%M') if ticket[4] else 'N/A' }}</td>
+                <td>{{ ticket.id }}</td>
+                <td><a href="/ticket/{{ ticket.id }}">{{ ticket.title }}</a></td>
+                <td class="status-{{ ticket.status }}">{{ ticket.status }}</td>
+                <td>{{ ticket.priority }}</td>
+                <td>{{ ticket.created_at.strftime('%Y-%m-%d %H:%M') if ticket.created_at else 'N/A' }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </body>
 </html>
-'''
+"""
 
-TICKET_DETAIL_TEMPLATE = '''
+TICKET_DETAIL_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Ticket #{{ ticket[0] }}</title>
+    <title>Ticket #{{ ticket.id }}</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; }
@@ -217,38 +175,37 @@ TICKET_DETAIL_TEMPLATE = '''
 </head>
 <body>
     <div class="header">
-        <h1>🎫 Ticket #{{ ticket[0] }}: {{ ticket[1] }}</h1>
+        <h1>🎫 Ticket #{{ ticket.id }}: {{ ticket.title }}</h1>
         <a href="/" style="text-decoration: none;">← Back to list</a>
     </div>
     
     <div class="ticket-info">
-        <p><strong>Status:</strong> {{ ticket[3] }}</p>
-        <p><strong>Priority:</strong> {{ ticket[4] }}</p>
-        <p><strong>Created:</strong> {{ ticket[5].strftime('%Y-%m-%d %H:%M') if ticket[5] else 'N/A' }}</p>
+        <p><strong>Status:</strong> {{ ticket.status }}</p>
+        <p><strong>Priority:</strong> {{ ticket.priority }}</p>
+        <p><strong>Created:</strong> {{ ticket.created_at.strftime('%Y-%m-%d %H:%M') if ticket.created_at else 'N/A' }}</p>
         <p><strong>Description:</strong></p>
-        <p>{{ ticket[2] }}</p>
+        <p>{{ ticket.description }}</p>
         
-        <form method="POST" action="/ticket/{{ ticket[0] }}/status" class="status-form">
+        <form method="POST" action="/ticket/{{ ticket.id }}/status" class="status-form">
             <label>Update Status:</label>
-            <select name="status">
-                <option value="open" {% if ticket[3] == 'open' %}selected{% endif %}>Open</option>
-                <option value="in-progress" {% if ticket[3] == 'in-progress' %}selected{% endif %}>In Progress</option>
-                <option value="closed" {% if ticket[3] == 'closed' %}selected{% endif %}>Closed</option>
+            <select name="status" onchange="this.form.submit()">
+                <option value="open" {% if ticket.status == 'open' %}selected{% endif %}>Open</option>
+                <option value="in-progress" {% if ticket.status == 'in-progress' %}selected{% endif %}>In Progress</option>
+                <option value="closed" {% if ticket.status == 'closed' %}selected{% endif %}>Closed</option>
             </select>
-            <button type="submit" class="btn btn-secondary">Update</button>
         </form>
     </div>
     
     <div class="messages">
-        <h2>💬 Messages</h2>
-        {% for message in messages %}
+        <h2>Messages</h2>
+        {% for msg in messages %}
         <div class="message">
-            <p>{{ message[0] }}</p>
-            <p class="message-time">{{ message[1].strftime('%Y-%m-%d %H:%M') if message[1] else 'N/A' }}</p>
+            <div class="message-time">{{ msg.created_at.strftime('%Y-%m-%d %H:%M') if msg.created_at else 'N/A' }}</div>
+            <p>{{ msg.message }}</p>
         </div>
         {% endfor %}
         
-        <form method="POST" action="/ticket/{{ ticket[0] }}/message">
+        <form method="POST" action="/ticket/{{ ticket.id }}/message">
             <div class="form-group">
                 <label>Add Message:</label>
                 <textarea name="message" rows="4" required></textarea>
@@ -258,25 +215,27 @@ TICKET_DETAIL_TEMPLATE = '''
     </div>
 </body>
 </html>
-'''
+"""
 
-NEW_TICKET_TEMPLATE = '''
+NEW_TICKET_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Create New Ticket</title>
+    <title>New Ticket</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }
         .form-group { margin: 20px 0; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: Arial, sans-serif; }
-        .btn { background-color: #4CAF50; color: white; padding: 12px 30px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .form-group input, .form-group textarea, .form-group select { 
+            width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: Arial, sans-serif; 
+        }
+        .btn { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
         .btn:hover { background-color: #45a049; }
     </style>
 </head>
 <body>
     <h1>➕ Create New Ticket</h1>
-    <a href="/">← Back to list</a>
+    <a href="/" style="text-decoration: none;">← Back to list</a>
     
     <form method="POST">
         <div class="form-group">
@@ -302,7 +261,7 @@ NEW_TICKET_TEMPLATE = '''
     </form>
 </body>
 </html>
-'''
+"""
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)

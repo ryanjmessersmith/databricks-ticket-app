@@ -1,3 +1,7 @@
-command:
-  - python
-  - app.py
+command: ["python", "app.py"]
+resources:
+  - name: lakebase-url
+    secret:
+      scope: database
+      key: lakebase-url
+      permission: READ
