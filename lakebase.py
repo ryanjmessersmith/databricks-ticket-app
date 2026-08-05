@@ -14,7 +14,13 @@ from contextlib import contextmanager
 import psycopg2
 from databricks.sdk import WorkspaceClient
 from psycopg2.extras import RealDictCursor
-from sqlalchemy import create_engine
+
+# Make SQLAlchemy optional - only needed for get_engine()
+try:
+    from sqlalchemy import create_engine
+    _SQLALCHEMY_AVAILABLE = True
+except ImportError:
+    _SQLALCHEMY_AVAILABLE = False
 
 _w = WorkspaceClient()
 
@@ -40,6 +46,11 @@ def get_connection():
 
 def get_engine():
     """Return a SQLAlchemy engine for Lakebase."""
+    if not _SQLALCHEMY_AVAILABLE:
+        raise ImportError(
+            "SQLAlchemy is required for get_engine(). "
+            "Install it with: pip install sqlalchemy"
+        )
     return create_engine(_lakebase_url())
 
 
