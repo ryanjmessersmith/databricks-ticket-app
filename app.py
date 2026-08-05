@@ -14,7 +14,7 @@ def home():
     """Home page - list all tickets."""
     try:
         tickets = lakebase.run_query("""
-            SELECT id, title, status, priority, created_at 
+            SELECT ticket_id as id, title, status, created_by, created_at 
             FROM tickets 
             ORDER BY created_at DESC
         """)
@@ -132,7 +132,7 @@ HOME_TEMPLATE = """
                 <th>ID</th>
                 <th>Title</th>
                 <th>Status</th>
-                <th>Priority</th>
+                <th>Created By</th>
                 <th>Created</th>
             </tr>
         </thead>
