@@ -11,43 +11,51 @@ def healthz():
 
 @app.route('/')
 def home():
-    """Home page - list all tickets with filtering."""
+    """Home page - list all tickets with filtering, sorted by last message time."""
     try:
         # Get filter parameter
         status_filter = request.args.get('status', 'all')
         
-        # Build query based on filter
+        # Build query based on filter - sort by most recent message (nulls first = no messages yet)
         if status_filter == 'all':
             query = """
-                SELECT ticket_id as id, title, status, priority, created_by, created_at 
-                FROM tickets 
-                ORDER BY created_at DESC
+                SELECT 
+                    t.ticket_id as id, 
+                    t.title, 
+                    t.status, 
+                    t.priority, 
+                    t.created_by, 
+                    t.created_at,
+                    MAX(tm.created_at) as last_message_at
+                FROM tickets t
+                LEFT JOIN ticket_messages tm ON t.ticket_id = tm.ticket_id
+                GROUP BY t.ticket_id, t.title, t.status, t.priority, t.created_by, t.created_at
+                ORDER BY last_message_at NULLS FIRST, t.created_at DESC
             """
             params = None
         else:
             query = """
-                SELECT ticket_id as id, title, status, priority, created_by, created_at 
-                FROM tickets 
-                WHERE status = %s
-                ORDER BY created_at DESC
+                SELECT 
+                    t.ticket_id as id, 
+                    t.title, 
+                    t.status, 
+                    t.priority, 
+                    t.created_by, 
+                    t.created_at,
+                    MAX(tm.created_at) as last_message_at
+                FROM tickets t
+                LEFT JOIN ticket_messages tm ON t.ticket_id = tm.ticket_id
+                WHERE t.status = %s
+                GROUP BY t.ticket_id, t.title, t.status, t.priority, t.created_by, t.created_at
+                ORDER BY last_message_at NULLS FIRST, t.created_at DESC
             """
             params = (status_filter,)
         
         tickets = lakebase.run_query(query, params) if params else lakebase.run_query(query)
         
-        # Get counts for each status
-        counts = lakebase.run_query("""
-            SELECT status, COUNT(*) as count 
-            FROM tickets 
-            GROUP BY status
-        """)
-        
-        status_counts = {row['status']: row['count'] for row in counts}
-        
         return render_template_string(HOME_TEMPLATE, 
                                      tickets=tickets, 
-                                     status_filter=status_filter,
-                                     status_counts=status_counts)
+                                     status_filter=status_filter)
     except Exception as e:
         return f"<h1>Error loading tickets</h1><p>{str(e)}</p>", 500
 
@@ -234,40 +242,6 @@ HOME_TEMPLATE = """
             box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
         }
         
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 32px;
-        }
-        
-        .stat-card {
-            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-            border-left: 4px solid;
-        }
-        
-        .stat-card.open { border-left-color: #ff9800; }
-        .stat-card.in-progress { border-left-color: #2196F3; }
-        .stat-card.closed { border-left-color: #4CAF50; }
-        
-        .stat-number {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #1a1a1a;
-            margin-bottom: 8px;
-        }
-        
-        .stat-label {
-            font-size: 0.9rem;
-            color: #6c757d;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
         .ticket-grid {
             display: grid;
             gap: 16px;
@@ -280,7 +254,7 @@ HOME_TEMPLATE = """
             transition: all 0.3s ease;
             border: 2px solid transparent;
             display: grid;
-            grid-template-columns: auto 1fr auto auto auto auto;
+            grid-template-columns: 1fr auto auto auto;
             gap: 20px;
             align-items: center;
         }
@@ -289,19 +263,6 @@ HOME_TEMPLATE = """
             transform: translateY(-2px);
             box-shadow: 0 8px 24px rgba(0,0,0,0.1);
             border-color: #667eea;
-        }
-        
-        .ticket-id {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            width: 48px;
-            height: 48px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 1.1rem;
         }
         
         .ticket-title {
@@ -396,33 +357,16 @@ HOME_TEMPLATE = """
             </div>
         </div>
         
-        <div class="stats">
-            <div class="stat-card open">
-                <div class="stat-number">{{ status_counts.get('open', 0) }}</div>
-                <div class="stat-label">Open</div>
-            </div>
-            <div class="stat-card in-progress">
-                <div class="stat-number">{{ status_counts.get('in-progress', 0) }}</div>
-                <div class="stat-label">In Progress</div>
-            </div>
-            <div class="stat-card closed">
-                <div class="stat-number">{{ status_counts.get('closed', 0) }}</div>
-                <div class="stat-label">Closed</div>
-            </div>
-        </div>
-        
         <div class="ticket-grid">
             {% if tickets %}
                 {% for ticket in tickets %}
                 <div class="ticket-card">
-                    <div class="ticket-id">#{{ ticket.id }}</div>
                     <div class="ticket-title">
                         <a href="/ticket/{{ ticket.id }}">{{ ticket.title }}</a>
+                        <div class="ticket-meta" style="margin-top: 4px;">{{ ticket.created_by }} • {{ ticket.created_at.strftime('%b %d, %Y') if ticket.created_at else 'N/A' }}</div>
                     </div>
                     <span class="priority-badge priority-{{ ticket.priority or 'medium' }}">{{ ticket.priority or 'medium' }}</span>
                     <span class="status-badge status-{{ ticket.status }}">{{ ticket.status }}</span>
-                    <div class="ticket-meta">{{ ticket.created_by }}</div>
-                    <div class="ticket-meta">{{ ticket.created_at.strftime('%b %d, %Y') if ticket.created_at else 'N/A' }}</div>
                 </div>
                 {% endfor %}
             {% else %}
@@ -689,7 +633,7 @@ TICKET_DETAIL_TEMPLATE = """
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎫 Ticket #{{ ticket.id }}: {{ ticket.title }}</h1>
+            <h1>🎫 {{ ticket.title }}</h1>
             <a href="/" class="back-link">← Back to list</a>
         </div>
         
