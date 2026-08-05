@@ -496,7 +496,7 @@ HOME_TEMPLATE = """
                 <select id="tagFilter" class="filter-select" onchange="updateFilters()">
                     <option value="all" {% if tag_filter == 'all' %}selected{% endif %}>All Tags</option>
                     {% for tag in all_tags %}
-                    <option value="{{ tag }}" {% if tag_filter == tag %}selected{% endif %}>{{ tag }}</option>
+                    <option value="{{ tag }}" {% if tag_filter == tag %}selected{% endif %}>{{ tag.capitalize() }}</option>
                     {% endfor %}
                 </select>
                 
@@ -521,7 +521,7 @@ HOME_TEMPLATE = """
                             {% for tag in ticket.tags.split(',') %}
                             {% set tag_name = tag.strip() %}
                             {% if tag_name %}
-                            <span class="tag {{ tag_name.lower() }}">{{ tag_name }}</span>
+                            <span class="tag {{ tag_name.lower() }}">{{ tag_name.capitalize() }}</span>
                             {% endif %}
                             {% endfor %}
                         </div>
@@ -1032,7 +1032,7 @@ TICKET_DETAIL_TEMPLATE = """
                 <div class="ticket-tags">
                     {% if ticket_tags %}
                         {% for tag in ticket_tags %}
-                        <span class="tag {{ tag.lower() }}">{{ tag }}</span>
+                        <span class="tag {{ tag.lower() }}">{{ tag.capitalize() }}</span>
                         {% endfor %}
                     {% else %}
                         <span style="color: #6c757d; font-size: 0.9rem;">No tags</span>
