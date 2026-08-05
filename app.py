@@ -11,14 +11,43 @@ def healthz():
 
 @app.route('/')
 def home():
-    """Home page - list all tickets."""
+    """Home page - list all tickets with filtering."""
     try:
-        tickets = lakebase.run_query("""
-            SELECT ticket_id as id, title, status, created_by, created_at 
+        # Get filter parameter
+        status_filter = request.args.get('status', 'all')
+        
+        # Build query based on filter
+        if status_filter == 'all':
+            query = """
+                SELECT ticket_id as id, title, status, priority, created_by, created_at 
+                FROM tickets 
+                ORDER BY created_at DESC
+            """
+            params = None
+        else:
+            query = """
+                SELECT ticket_id as id, title, status, priority, created_by, created_at 
+                FROM tickets 
+                WHERE status = %s
+                ORDER BY created_at DESC
+            """
+            params = (status_filter,)
+        
+        tickets = lakebase.run_query(query, params) if params else lakebase.run_query(query)
+        
+        # Get counts for each status
+        counts = lakebase.run_query("""
+            SELECT status, COUNT(*) as count 
             FROM tickets 
-            ORDER BY created_at DESC
+            GROUP BY status
         """)
-        return render_template_string(HOME_TEMPLATE, tickets=tickets)
+        
+        status_counts = {row['status']: row['count'] for row in counts}
+        
+        return render_template_string(HOME_TEMPLATE, 
+                                     tickets=tickets, 
+                                     status_filter=status_filter,
+                                     status_counts=status_counts)
     except Exception as e:
         return f"<h1>Error loading tickets</h1><p>{str(e)}</p>", 500
 
@@ -27,7 +56,7 @@ def view_ticket(ticket_id):
     """View a single ticket with all messages."""
     try:
         tickets = lakebase.run_query("""
-            SELECT ticket_id as id, title, status, created_by, created_at 
+            SELECT ticket_id as id, title, status, priority, created_by, created_at 
             FROM tickets 
             WHERE ticket_id = %s
         """, (ticket_id,))
@@ -55,14 +84,15 @@ def new_ticket():
         try:
             title = request.form.get('title')
             created_by = request.form.get('created_by', 'Anonymous')
+            priority = request.form.get('priority', 'medium')
             
             with lakebase.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO tickets (title, status, created_by) 
-                        VALUES (%s, 'open', %s) 
+                        INSERT INTO tickets (title, status, priority, created_by) 
+                        VALUES (%s, 'open', %s, %s) 
                         RETURNING ticket_id
-                    """, (title, created_by))
+                    """, (title, priority, created_by))
                     ticket_id = cur.fetchone()['ticket_id']
                     conn.commit()
             
@@ -101,6 +131,21 @@ def update_status(ticket_id):
         return redirect(url_for('view_ticket', ticket_id=ticket_id))
     except Exception as e:
         return f"<h1>Error updating status</h1><p>{str(e)}</p>", 500
+
+@app.route('/ticket/<int:ticket_id>/priority', methods=['POST'])
+def update_priority(ticket_id):
+    """Update ticket priority."""
+    try:
+        priority = request.form.get('priority')
+        lakebase.run_write("""
+            UPDATE tickets 
+            SET priority = %s 
+            WHERE ticket_id = %s
+        """, (priority, ticket_id))
+        
+        return redirect(url_for('view_ticket', ticket_id=ticket_id))
+    except Exception as e:
+        return f"<h1>Error updating priority</h1><p>{str(e)}</p>", 500
 
 # HTML Templates with Modern CSS
 HOME_TEMPLATE = """
@@ -147,6 +192,27 @@ HOME_TEMPLATE = """
             font-weight: 700;
         }
         
+        .controls {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+        }
+        
+        .filter-select {
+            padding: 10px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .filter-select:hover {
+            border-color: #667eea;
+        }
+        
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -168,6 +234,40 @@ HOME_TEMPLATE = """
             box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
         }
         
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            border-left: 4px solid;
+        }
+        
+        .stat-card.open { border-left-color: #ff9800; }
+        .stat-card.in-progress { border-left-color: #2196F3; }
+        .stat-card.closed { border-left-color: #4CAF50; }
+        
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
         .ticket-grid {
             display: grid;
             gap: 16px;
@@ -180,7 +280,7 @@ HOME_TEMPLATE = """
             transition: all 0.3s ease;
             border: 2px solid transparent;
             display: grid;
-            grid-template-columns: auto 1fr auto auto auto;
+            grid-template-columns: auto 1fr auto auto auto auto;
             gap: 20px;
             align-items: center;
         }
@@ -220,6 +320,29 @@ HOME_TEMPLATE = """
             color: #667eea;
         }
         
+        .priority-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        
+        .priority-low {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .priority-medium {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        
+        .priority-high {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
         .status-badge {
             padding: 6px 16px;
             border-radius: 20px;
@@ -253,23 +376,39 @@ HOME_TEMPLATE = """
             padding: 60px 20px;
             color: #6c757d;
         }
-        
-        .empty-state svg {
-            width: 120px;
-            height: 120px;
-            margin-bottom: 20px;
-            opacity: 0.3;
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🎫 Support Tickets</h1>
-            <a href="/ticket/new" class="btn">
-                <span>➕</span>
-                Create Ticket
-            </a>
+            <div class="controls">
+                <select class="filter-select" onchange="window.location.href='/?status='+this.value">
+                    <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All Tickets</option>
+                    <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+                    <option value="in-progress" {% if status_filter == 'in-progress' %}selected{% endif %}>In Progress</option>
+                    <option value="closed" {% if status_filter == 'closed' %}selected{% endif %}>Closed</option>
+                </select>
+                <a href="/ticket/new" class="btn">
+                    <span>➕</span>
+                    Create Ticket
+                </a>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card open">
+                <div class="stat-number">{{ status_counts.get('open', 0) }}</div>
+                <div class="stat-label">Open</div>
+            </div>
+            <div class="stat-card in-progress">
+                <div class="stat-number">{{ status_counts.get('in-progress', 0) }}</div>
+                <div class="stat-label">In Progress</div>
+            </div>
+            <div class="stat-card closed">
+                <div class="stat-number">{{ status_counts.get('closed', 0) }}</div>
+                <div class="stat-label">Closed</div>
+            </div>
         </div>
         
         <div class="ticket-grid">
@@ -280,6 +419,7 @@ HOME_TEMPLATE = """
                     <div class="ticket-title">
                         <a href="/ticket/{{ ticket.id }}">{{ ticket.title }}</a>
                     </div>
+                    <span class="priority-badge priority-{{ ticket.priority or 'medium' }}">{{ ticket.priority or 'medium' }}</span>
                     <span class="status-badge status-{{ ticket.status }}">{{ ticket.status }}</span>
                     <div class="ticket-meta">{{ ticket.created_by }}</div>
                     <div class="ticket-meta">{{ ticket.created_at.strftime('%b %d, %Y') if ticket.created_at else 'N/A' }}</div>
@@ -288,8 +428,8 @@ HOME_TEMPLATE = """
             {% else %}
                 <div class="empty-state">
                     <div style="font-size: 4rem; margin-bottom: 20px;">📭</div>
-                    <h2 style="margin-bottom: 12px; color: #495057;">No tickets yet</h2>
-                    <p>Create your first support ticket to get started</p>
+                    <h2 style="margin-bottom: 12px; color: #495057;">No tickets {{ 'with this status' if status_filter != 'all' else 'yet' }}</h2>
+                    <p>{% if status_filter != 'all' %}Try a different filter or create a new ticket{% else %}Create your first support ticket to get started{% endif %}</p>
                 </div>
             {% endif %}
         </div>
@@ -391,15 +531,45 @@ TICKET_DETAIL_TEMPLATE = """
             font-weight: 600;
         }
         
-        .status-selector {
+        .priority-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+        
+        .priority-low {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .priority-medium {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        
+        .priority-high {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .controls {
             display: flex;
+            gap: 24px;
             align-items: center;
-            gap: 12px;
             padding-top: 20px;
             border-top: 1px solid rgba(0,0,0,0.1);
         }
         
-        .status-selector select {
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .control-group select {
             padding: 8px 16px;
             border-radius: 8px;
             border: 2px solid #e0e0e0;
@@ -410,7 +580,7 @@ TICKET_DETAIL_TEMPLATE = """
             background: white;
         }
         
-        .status-selector select:hover {
+        .control-group select:hover {
             border-color: #667eea;
         }
         
@@ -530,6 +700,10 @@ TICKET_DETAIL_TEMPLATE = """
                     <span class="info-value" style="text-transform: capitalize;">{{ ticket.status }}</span>
                 </div>
                 <div class="info-item">
+                    <span class="info-label">Priority</span>
+                    <span class="priority-badge priority-{{ ticket.priority or 'medium' }}">{{ ticket.priority or 'medium' }}</span>
+                </div>
+                <div class="info-item">
                     <span class="info-label">Created By</span>
                     <span class="info-value">{{ ticket.created_by }}</span>
                 </div>
@@ -539,14 +713,25 @@ TICKET_DETAIL_TEMPLATE = """
                 </div>
             </div>
             
-            <form method="POST" action="/ticket/{{ ticket.id }}/status" class="status-selector">
-                <span class="info-label">Update Status:</span>
-                <select name="status" onchange="this.form.submit()">
-                    <option value="open" {% if ticket.status == 'open' %}selected{% endif %}>Open</option>
-                    <option value="in-progress" {% if ticket.status == 'in-progress' %}selected{% endif %}>In Progress</option>
-                    <option value="closed" {% if ticket.status == 'closed' %}selected{% endif %}>Closed</option>
-                </select>
-            </form>
+            <div class="controls">
+                <form method="POST" action="/ticket/{{ ticket.id }}/status" class="control-group">
+                    <span class="info-label">Update Status:</span>
+                    <select name="status" onchange="this.form.submit()">
+                        <option value="open" {% if ticket.status == 'open' %}selected{% endif %}>Open</option>
+                        <option value="in-progress" {% if ticket.status == 'in-progress' %}selected{% endif %}>In Progress</option>
+                        <option value="closed" {% if ticket.status == 'closed' %}selected{% endif %}>Closed</option>
+                    </select>
+                </form>
+                
+                <form method="POST" action="/ticket/{{ ticket.id }}/priority" class="control-group">
+                    <span class="info-label">Update Priority:</span>
+                    <select name="priority" onchange="this.form.submit()">
+                        <option value="low" {% if ticket.priority == 'low' %}selected{% endif %}>Low</option>
+                        <option value="medium" {% if ticket.priority == 'medium' or not ticket.priority %}selected{% endif %}>Medium</option>
+                        <option value="high" {% if ticket.priority == 'high' %}selected{% endif %}>High</option>
+                    </select>
+                </form>
+            </div>
         </div>
         
         <div class="messages-section">
@@ -657,7 +842,7 @@ NEW_TICKET_TEMPLATE = """
         }
         
         .form-group input,
-        .form-group textarea {
+        .form-group select {
             width: 100%;
             padding: 14px 18px;
             border: 2px solid #e0e0e0;
@@ -668,7 +853,7 @@ NEW_TICKET_TEMPLATE = """
         }
         
         .form-group input:focus,
-        .form-group textarea:focus {
+        .form-group select:focus {
             outline: none;
             border-color: #667eea;
             box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
@@ -716,6 +901,15 @@ NEW_TICKET_TEMPLATE = """
             <div class="form-group">
                 <label>Ticket Title</label>
                 <input type="text" name="title" required placeholder="Brief description of your issue">
+            </div>
+            
+            <div class="form-group">
+                <label>Priority</label>
+                <select name="priority" required>
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
             </div>
             
             <button type="submit" class="btn">Create Ticket</button>
