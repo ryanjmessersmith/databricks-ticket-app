@@ -264,4 +264,7 @@ NEW_TICKET_TEMPLATE = """
 """
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    import os
+    host = os.getenv('FLASK_RUN_HOST', '0.0.0.0')
+    port = int(os.getenv('FLASK_RUN_PORT', 8000))
+    app.run(debug=True, host=host, port=port)
