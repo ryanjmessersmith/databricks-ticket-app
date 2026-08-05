@@ -679,6 +679,47 @@ TICKET_DETAIL_TEMPLATE = """
         .tag.feature { background: #e8f5e9; color: #2e7d32; }
         .tag.question { background: #fff3e0; color: #e65100; }
         
+        .tag-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .tag-button {
+            background: white;
+            border: 2px solid #e0e0e0;
+            color: #495057;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .tag-button:hover {
+            border-color: #667eea;
+        }
+        
+        .tag-button.active {
+            border-color: transparent;
+        }
+        
+        .tag-button.active.bug {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .tag-button.active.feature {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .tag-button.active.question {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        
         .priority-badge {
             padding: 4px 12px;
             border-radius: 12px;
@@ -718,7 +759,7 @@ TICKET_DETAIL_TEMPLATE = """
             gap: 12px;
         }
         
-        .control-group select, .control-group input {
+        .control-group select {
             padding: 8px 16px;
             border-radius: 8px;
             border: 2px solid #e0e0e0;
@@ -729,23 +770,24 @@ TICKET_DETAIL_TEMPLATE = """
             background: white;
         }
         
-        .control-group select:hover, .control-group input:hover {
+        .control-group select:hover {
             border-color: #667eea;
-        }
-        
-        .control-group input {
-            min-width: 250px;
         }
         
         .btn-small {
             background: #667eea;
             color: white;
-            padding: 6px 12px;
+            padding: 8px 16px;
             border: none;
             border-radius: 6px;
             font-weight: 600;
             cursor: pointer;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        
+        .btn-small:hover {
+            background: #5568d3;
         }
         
         .messages-section, .history-section {
@@ -909,6 +951,20 @@ TICKET_DETAIL_TEMPLATE = """
         }
     </style>
     <script>
+        let selectedTags = new Set({{ ticket_tags | tojson }});
+        
+        function toggleTag(tagName) {
+            const button = document.querySelector(`.tag-button[data-tag="${tagName}"]`);
+            if (selectedTags.has(tagName)) {
+                selectedTags.delete(tagName);
+                button.classList.remove('active');
+            } else {
+                selectedTags.add(tagName);
+                button.classList.add('active');
+            }
+            document.getElementById('tagsInput').value = Array.from(selectedTags).join(',');
+        }
+        
         function confirmDelete() {
             document.getElementById('deleteModal').style.display = 'block';
         }
@@ -927,6 +983,17 @@ TICKET_DETAIL_TEMPLATE = """
             if (event.target == modal) {
                 closeModal();
             }
+        }
+        
+        // Initialize active tags on load
+        window.onload = function() {
+            selectedTags.forEach(tag => {
+                const button = document.querySelector(`.tag-button[data-tag="${tag}"]`);
+                if (button) {
+                    button.classList.add('active');
+                }
+            });
+            document.getElementById('tagsInput').value = Array.from(selectedTags).join(',');
         }
     </script>
 </head>
@@ -993,13 +1060,20 @@ TICKET_DETAIL_TEMPLATE = """
                         <option value="high" {% if ticket.priority == 'high' %}selected{% endif %}>High</option>
                     </select>
                 </form>
-                
-                <form method="POST" action="/ticket/{{ ticket.id }}/tags" class="control-group">
-                    <span class="info-label">Tags:</span>
-                    <input type="text" name="tags" value="{{ ticket.tags or '' }}" placeholder="bug, feature, question">
-                    <button type="submit" class="btn-small">Update</button>
-                </form>
             </div>
+            
+            <form method="POST" action="/ticket/{{ ticket.id }}/tags" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(0,0,0,0.1);">
+                <div style="margin-bottom: 12px;">
+                    <span class="info-label">Edit Tags:</span>
+                </div>
+                <div class="tag-buttons">
+                    <button type="button" class="tag-button bug" data-tag="bug" onclick="toggleTag('bug')">🐛 Bug</button>
+                    <button type="button" class="tag-button feature" data-tag="feature" onclick="toggleTag('feature')">✨ Feature</button>
+                    <button type="button" class="tag-button question" data-tag="question" onclick="toggleTag('question')">❓ Question</button>
+                </div>
+                <input type="hidden" id="tagsInput" name="tags" value="">
+                <button type="submit" class="btn-small" style="margin-top: 12px;">Save Tags</button>
+            </form>
         </div>
         
         <div class="history-section">
@@ -1173,6 +1247,47 @@ NEW_TICKET_TEMPLATE = """
             box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
         }
         
+        .tag-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .tag-button {
+            background: white;
+            border: 2px solid #e0e0e0;
+            color: #495057;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .tag-button:hover {
+            border-color: #667eea;
+        }
+        
+        .tag-button.active {
+            border-color: transparent;
+        }
+        
+        .tag-button.active.bug {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .tag-button.active.feature {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .tag-button.active.question {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -1197,6 +1312,21 @@ NEW_TICKET_TEMPLATE = """
             margin-bottom: 16px;
         }
     </style>
+    <script>
+        let selectedTags = new Set();
+        
+        function toggleTag(tagName) {
+            const button = document.querySelector(`.tag-button[data-tag="${tagName}"]`);
+            if (selectedTags.has(tagName)) {
+                selectedTags.delete(tagName);
+                button.classList.remove('active');
+            } else {
+                selectedTags.add(tagName);
+                button.classList.add('active');
+            }
+            document.getElementById('tagsInput').value = Array.from(selectedTags).join(',');
+        }
+    </script>
 </head>
 <body>
     <div class="container">
@@ -1228,8 +1358,13 @@ NEW_TICKET_TEMPLATE = """
             
             <div class="form-group">
                 <label>Tags</label>
-                <input type="text" name="tags" placeholder="bug, feature, question">
-                <div class="help-text">Separate multiple tags with commas</div>
+                <div class="tag-buttons">
+                    <button type="button" class="tag-button bug" data-tag="bug" onclick="toggleTag('bug')">🐛 Bug</button>
+                    <button type="button" class="tag-button feature" data-tag="feature" onclick="toggleTag('feature')">✨ Feature</button>
+                    <button type="button" class="tag-button question" data-tag="question" onclick="toggleTag('question')">❓ Question</button>
+                </div>
+                <input type="hidden" id="tagsInput" name="tags" value="">
+                <div class="help-text">Click to select multiple tags</div>
             </div>
             
             <button type="submit" class="btn">Create Ticket</button>
